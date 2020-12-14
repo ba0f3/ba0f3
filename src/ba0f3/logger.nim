@@ -6,7 +6,7 @@ var
   logger {.threadvar.}: ConsoleLogger
   fileLogger {.threadvar.}: RollingFileLogger
 
-proc initLogger*(file: string = "", level = lvlInfo, fmtStr = "[$date $time] [$levelname] ")  =
+proc initLogger*(file: string = "", level = lvlDebug, fmtStr = "[$date $time] [$levelname] ")  =
   if logger != nil:
     return
   when defined(release):
@@ -25,7 +25,6 @@ macro log1(level: static[string], args: varargs[untyped]): untyped =
   for i in 0..<args.len:
     let kind = args[i].kind
     if kind == nnkExprEqExpr:
-      echo args[i][1].kind
       if args[i][1].kind == nnkIdent or args[i][1].kind == nnkCall:
         result.add newLit($args[i][0] & "=")
         result.add args[i][1]
