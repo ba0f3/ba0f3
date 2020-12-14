@@ -25,7 +25,8 @@ macro log1(level: static[string], args: varargs[untyped]): untyped =
   for i in 0..<args.len:
     let kind = args[i].kind
     if kind == nnkExprEqExpr:
-      if args[i][1].kind == nnkIdent:
+      echo args[i][1].kind
+      if args[i][1].kind == nnkIdent or args[i][1].kind == nnkCall:
         result.add newLit($args[i][0] & "=")
         result.add args[i][1]
       else:
@@ -66,5 +67,5 @@ when isMainModule:
   addHandler(newConsoleLogger())
   let a = 1
 
-  debug "debug", a, abc=1, a, b=a
+  debug "debug", a, abc=1, a, b=bool(a)
   info "info", a, abc=1, a, b=a
