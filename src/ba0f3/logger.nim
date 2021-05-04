@@ -47,37 +47,37 @@ template info*(args: varargs[untyped]): untyped =
   when not compileOption("threads"):
     log1("lvlInfo", args)
   else:
-    log1("lvlInfo", args, thread=getThreadId())
+    log1("lvlInfo", args, t=getThreadId())
 
 template debug*(args: varargs[untyped]): untyped =
   when not compileOption("threads"):
     log1("lvlDebug", args)
   else:
-    log1("lvlDebug", args, thread=getThreadId())
+    log1("lvlDebug", args, t=getThreadId())
 
 template notice*(args: varargs[untyped]): untyped =
   when not compileOption("threads"):
     log1("lvlNotice", args)
   else:
-    log1("lvlNotice", args, thread=getThreadId())
+    log1("lvlNotice", args, t=getThreadId())
 
 template warn*(args: varargs[untyped]): untyped =
   when not compileOption("threads"):
     log1("lvlWarn", args)
   else:
-    log1("lvlWarn", args, thread=getThreadId())
+    log1("lvlWarn", args, t=getThreadId())
 
 template error*(args: varargs[untyped]): untyped =
   when not compileOption("threads"):
-    log1("lvlError", args)
+    log1("lvlError", args, stacktrace=getStackTrace())
   else:
-    log1("lvlError", args, stacktrace=getStackTrace(), thread=getThreadId())
+    log1("lvlError", args, t=getThreadId(), stacktrace=getStackTrace())
 
 template fatal*(args: varargs[untyped]): untyped =
   when not compileOption("threads"):
     log1("lvlFatal", args)
   else:
-    log1("lvlFatal", args, thread=getThreadId())
+    log1("lvlFatal", args, t=getThreadId())
 
 when isMainModule:
   addHandler(newConsoleLogger())
