@@ -9,17 +9,14 @@ var
 proc initLogger*(file: string = "", level = lvlDebug, fmtStr = "[$date $time] [$levelname] ")  =
   if logger != nil:
     return
-  when not defined(release):
-    logger = newConsoleLogger(level, fmtStr=fmtStr)
-    addHandler(logger)
-
+  logger = newConsoleLogger(level, fmtStr=fmtStr)
   if file.len != 0:
     when not defined(release):
       fileLogger = newFileLogger(file, mode=fmAppend, levelThreshold=level, fmtStr=fmtStr, bufSize=0)
     else:
       fileLogger = newFileLogger(file, mode=fmAppend, levelThreshold=level, fmtStr=fmtStr)
-    #fileLogger = newRollingFileLogger(file, mode=fmAppend, levelThreshold=level, fmtStr=fmtStr, maxLines=1_000_000, bufSize=0)
     addHandler(fileLogger)
+  addHandler(logger)
 
 macro log1(level: static[string], args: varargs[untyped]): untyped =
   result = newNimNode(nnkCall)
