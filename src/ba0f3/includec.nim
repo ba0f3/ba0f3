@@ -1,7 +1,6 @@
 import macros, tables, strutils
 
 {.experimental: "dotOperators".}
-{.experimental: "codeReordering".}
 
 type
   C* = object
@@ -37,7 +36,7 @@ macro makeProc*(c: static[C], name: string, args: varargs[untyped]): untyped =
   var
     definedProcs {.global.}: seq[string]
     nameMangling = $name & "_"
-    returnType: string
+    returnType = "int"
   #nameMangling &= "v" # return type, void for now
   result = newStmtList()
   for i in 0..<args.len:
@@ -98,11 +97,13 @@ macro makeProc*(c: static[C], name: string, args: varargs[untyped]): untyped =
     #add(c)
     add(newStrLitNode(c.header))
   )
-  result = newProc(postfix(ident($name), "*"), params, newEmptyNode(), nnkProcDef, pragmas)
+  #result = newProc(postfix(ident($name), "*"), params, newEmptyNode(), nnkProcDef, pragmas)
+  result = newProc(ident($name), params, newEmptyNode(), nnkProcDef, pragmas)
   #echo treeRepr result
   #echo repr result
 
-macro call*(name: string, args: varargs[untyped]) =
+macro call*(retval: typed, name: string, args: varargs[untyped]) =
+  echo getTypeInst(retval).repr
   result = newCall(ident($name))
   for arg in items(args):
     #echo arg.kind
@@ -113,16 +114,31 @@ macro call*(name: string, args: varargs[untyped]) =
       result.insert(result.len, newDotExpr(arg, ident("cstring")))
     else:
       result.insert(result.len, arg)
+  result = newAssignment(retval, result)
   #echo treeRepr result
   #echo repr result
 
-template `.`*(c: static[C], name: untyped, args: varargs[typed]): auto =
+template `.`*(c: static[C], name: untyped, args: varargs[typed]): typed =
   makeProc(c, astToStr(name), args)
-  call(astToStr(name), args)
+
+  var a: int
+  call(a, astToStr(name), args)
+  return a
+
+
+#template call_ret*(T: typed, body: untyped): void =
+#  var ret: T
+#  proc inner() {.closure.} =
+#    ret = body
+#  return ret
+
+
+template `=`*(a: untyped) =
+  discard
 
 when isMainModule:
   const io = C.includec("<stdio.h>")
   io.printf("Hello world\n")
-  io.printf("Hello world, again\n")
-  io.printf("Hello: %s\n", "world")
-  io.printf("signed: %d  unsigned: %u\n", 10, -1)
+  #io.printf("Hello world, again\n")
+  #io.printf("Hello: %s\n", "world")
+  #io.printf("signed: %d  unsigned: %u\n", 10, -1)
