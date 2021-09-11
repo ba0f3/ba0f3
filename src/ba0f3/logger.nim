@@ -1,20 +1,42 @@
-import macros, logging, os
+import macros, logging, os, deques, locks
 
 export Level, Logger, log, addHandler, getHandlers
+
+type
+  DequeueLogger* = ref object of Logger
+    maxSize: int
+    queues*: Deque[string]
+    lock: Lock
+
+proc newDequeueLogger*(initialSize = 10, maxSize = -1, fmtStr = defaultFmtStr): DequeueLogger =
+  new result
+  result.maxSize = maxSize
+  result.fmtStr = fmtStr
+  result.queues = initDeque[string](initialSize)
+  initLock(result.lock)
+
+method log*(logger: DequeueLogger, level: Level, args: varargs[string, `$`]) =
+  if level >= getLogFilter() and level >= logger.levelThreshold:
+    let ln = substituteLog(logger.fmtStr, level, args)
+    withLock logger.lock:
+      if logger.maxSize > 0 and logger.queues.len >= logger.maxSize:
+        var shrinkFirst = logger.queues.len - logger.maxSize  - 1
+        logger.queues.shrink(shrinkFirst)
+      logger.queues.addLast(ln)
 
 var
   logger {.threadvar.}: ConsoleLogger
   fileLogger {.threadvar.}: FileLogger
 
-proc initLogger*(file: string = "", level = lvlDebug, fmtStr = "[$date $time] [$levelname] ")  =
+proc initLogger*(file: string = "", level = lvlDebug, fmtStr = "[$date $time] [$levelname]\t", bufSize = -1)  =
   if logger != nil:
     return
   logger = newConsoleLogger(level, fmtStr=fmtStr)
   if file.len != 0:
-    when not defined(release):
-      fileLogger = newFileLogger(file, mode=fmAppend, levelThreshold=level, fmtStr=fmtStr, bufSize=0)
-    else:
-      fileLogger = newFileLogger(file, mode=fmAppend, levelThreshold=level, fmtStr=fmtStr)
+    #when not defined(release):
+    #  fileLogger = newFileLogger(file, mode=fmAppend, levelThreshold=level, fmtStr=fmtStr, bufSize=0)
+    #else:
+    fileLogger = newFileLogger(file, mode=fmAppend, levelThreshold=level, fmtStr=fmtStr, bufSize)
     addHandler(fileLogger)
   addHandler(logger)
 
@@ -22,7 +44,6 @@ macro log1(level: static[string], args: varargs[untyped]): untyped =
   result = newNimNode(nnkCall)
   result.add(newIdentNode("log"))
   result.add(newIdentNode(level))
-  result.add newLit("\t")
   for i in 0..<args.len:
     let kind = args[i].kind
     if kind == nnkExprEqExpr:

@@ -1,7 +1,8 @@
 from strutils import toHex, repeat
 
-proc hexdump*(data: cstring, length: int) =
+proc hexdump*(data: pointer, length: int) =
   ## Print hex dump for a block of data
+  var data = cast[cstring](data)
   var ascii: array[17, char]
   ascii[16] = '\0'
   for i in 0..15:
@@ -24,4 +25,3 @@ proc hexdump*(data: cstring, length: int) =
         stdout.write "    "
         inc(j)
       echo "| ", cast[cstring](addr ascii)
-
