@@ -1,8 +1,8 @@
-import macros, random, tables
+import macros, random, tables, strutils
 
 converter toPointer*(x: int): pointer = cast[pointer](x)
 
-proc fnv32a*[T: string|openArray[char]|openArray[uint8]|openArray[int8]](data: T): int32 =
+proc fnv32a[T: string|openArray[char]|openArray[uint8]|openArray[int8]](data: T): int32 =
   result = -18652613'i32
   for b in items(data):
     result = result xor ord(b).int32
@@ -15,7 +15,11 @@ var
   r {.compileTime.} = initRand(seed)
 
 macro faddr*(body: untyped): untyped =
-  var name = ident(nameToPointer[$body.toStrLit])
+  let input = ($body.toStrLit).split(".")
+  if input.len > 1:
+    let desc = input[1]
+    echo desc
+  let name = ident(nameToPointer[input[0]])
   result = quote do:
     addr `name`
 
@@ -103,3 +107,11 @@ macro fptr*(body: untyped) : untyped =
 
     result.add(varSection)
     result.add(aliasProc)
+    #echo treeRepr result
+
+when isMainModule:
+  proc NI_Add(a: int, b: int): int = a + b
+  proc A(a: int, b: int): int {.fptr, cdecl.} = 123
+  proc A(a: float, b: float): float {.fptr, cdecl.} = 124
+
+  echo repr(faddr A.NI_Add)

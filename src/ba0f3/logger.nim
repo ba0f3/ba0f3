@@ -1,29 +1,6 @@
-import macros, logging, os, deques, locks
+import macros, logging, os
 
 export Level, Logger, log, addHandler, getHandlers
-
-type
-  DequeueLogger* = ref object of Logger
-    maxSize: int
-    queues*: Deque[string]
-    lock: Lock
-
-proc newDequeueLogger*(initialSize = 10, maxSize = -1, fmtStr = defaultFmtStr): DequeueLogger =
-  new result
-  result.maxSize = maxSize
-  result.fmtStr = fmtStr
-  result.queues = initDeque[string](initialSize)
-  initLock(result.lock)
-
-method log*(logger: DequeueLogger, level: Level, args: varargs[string, `$`]) =
-  if level >= getLogFilter() and level >= logger.levelThreshold:
-    let ln = substituteLog(logger.fmtStr, level, args)
-    withLock logger.lock:
-      if logger.maxSize > 0 and logger.queues.len >= logger.maxSize:
-        var shrinkFirst = logger.queues.len - logger.maxSize  - 1
-        logger.queues.shrink(shrinkFirst)
-      logger.queues.addLast(ln)
-
 var
   logger {.threadvar.}: ConsoleLogger
   fileLogger {.threadvar.}: FileLogger
@@ -33,14 +10,11 @@ proc initLogger*(file: string = "", level = lvlDebug, fmtStr = "[$date $time] [$
     return
   logger = newConsoleLogger(level, fmtStr=fmtStr)
   if file.len != 0:
-    #when not defined(release):
-    #  fileLogger = newFileLogger(file, mode=fmAppend, levelThreshold=level, fmtStr=fmtStr, bufSize=0)
-    #else:
     fileLogger = newFileLogger(file, mode=fmAppend, levelThreshold=level, fmtStr=fmtStr, bufSize)
     addHandler(fileLogger)
   addHandler(logger)
 
-macro log1(level: static[string], args: varargs[untyped]): untyped =
+macro logImpl(level: static[string], args: varargs[untyped]): untyped =
   result = newNimNode(nnkCall)
   result.add(newIdentNode("log"))
   result.add(newIdentNode(level))
@@ -63,39 +37,39 @@ macro log1(level: static[string], args: varargs[untyped]): untyped =
 
 template info*(args: varargs[untyped]): untyped =
   when not compileOption("threads"):
-    log1("lvlInfo", args)
+    logImpl("lvlInfo", args)
   else:
-    log1("lvlInfo", args, t=getThreadId())
+    logImpl("lvlInfo", args, t=getThreadId())
 
 template debug*(args: varargs[untyped]): untyped =
   when not compileOption("threads"):
-    log1("lvlDebug", args)
+    logImpl("lvlDebug", args)
   else:
-    log1("lvlDebug", args, t=getThreadId())
+    logImpl("lvlDebug", args, t=getThreadId())
 
 template notice*(args: varargs[untyped]): untyped =
   when not compileOption("threads"):
-    log1("lvlNotice", args)
+    logImpl("lvlNotice", args)
   else:
-    log1("lvlNotice", args, t=getThreadId())
+    logImpl("lvlNotice", args, t=getThreadId())
 
 template warn*(args: varargs[untyped]): untyped =
   when not compileOption("threads"):
-    log1("lvlWarn", args)
+    logImpl("lvlWarn", args)
   else:
-    log1("lvlWarn", args, t=getThreadId())
+    logImpl("lvlWarn", args, t=getThreadId())
 
 template error*(args: varargs[untyped]): untyped =
   when not compileOption("threads"):
-    log1("lvlError", args, stacktrace=getStackTrace())
+    logImpl("lvlError", args, stacktrace=getStackTrace())
   else:
-    log1("lvlError", args, t=getThreadId(), stacktrace=getStackTrace())
+    logImpl("lvlError", args, t=getThreadId(), stacktrace=getStackTrace())
 
 template fatal*(args: varargs[untyped]): untyped =
   when not compileOption("threads"):
-    log1("lvlFatal", args)
+    logImpl("lvlFatal", args)
   else:
-    log1("lvlFatal", args, t=getThreadId())
+    logImpl("lvlFatal", args, t=getThreadId())
 
 when isMainModule:
   addHandler(newConsoleLogger())
