@@ -21,7 +21,7 @@ type
     numThreads*: int
     loggers*: seq[Logger]
 
-  OnRequest = proc(selector: Selector[Data], client: SocketHandle, data: string) {.gcsafe.}
+  OnRequest = proc(selector: Selector[Data], client: SocketHandle, data: StringStream) {.gcsafe.}
 
 template handleAccept() =
   let (client, address) = fd.SocketHandle.accept()
@@ -36,7 +36,8 @@ template handleAccept() =
   selector.registerHandle(client, {Event.Read}, Data(kind: Client))
 
 template handleClientClosure(selector: Selector[Data], fd: SocketHandle|int, inLoop=true) =
-  debug "Client disconnected, unregister handler", fd
+  let (address, _) = getPeerAddr(fd.SocketHandle, AF_INET)
+  debug "Client disconnected, unregister handler", fd, address
   selector.unregister(fd)
   fd.SocketHandle.close()
   when inLoop:
@@ -67,7 +68,7 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
       if Event.Read in events[i].events:
         const size = 256
         var buf: array[size, char]
-        var data = ""
+        var data = newStringStream()
         while true:
           let ret = recv(fd.SocketHandle, addr buf[0], size, 0.cint)
           if ret == 0:
@@ -81,13 +82,12 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
               handleClientClosure(selector, fd)
             raiseOSError(lastError)
           # Write buffer to our data.
-          let origLen = data.len
-          data.setLen(origLen + ret)
-          for i in 0 ..< ret: data[origLen+i] = buf[i]
+          data.writeData(addr buf[0], ret)
           if ret != size:
             # Assume there is nothing else for us right now and break.
             break
-        if data.len != 0:
+        if data.getPosition() != 0:
+          data.setPosition(0)
           onRequest(selector, fd.SocketHandle, data)
 
       elif Event.Write in events[i].events:
@@ -105,11 +105,7 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
               handleClientClosure(selector, fd)
             raiseOSError(lastError)
           data.bytesSent.inc(ret)
-
-          #debug "Bytes sent: ", bytesSend=data.bytesSent, queueLen=data.sendQueue.len
-
           if data.sendQueue.len == data.bytesSent:
-            #debug "resent sending queue"
             data.bytesSent = 0
             data.sendQueue.setLen(0)
             selector.updateHandle(fd.SocketHandle, {Event.Read})
