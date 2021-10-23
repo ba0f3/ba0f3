@@ -1,8 +1,6 @@
 import tables, nimLUA, nimLUA/lua
 import ./logger
 
-initLogger()
-
 export nimLUA
 
 proc getScript*(L: LuaState, path: string): bool =

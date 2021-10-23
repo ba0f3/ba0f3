@@ -38,8 +38,6 @@ proc connect(c: RxClient) =
   withLock(c.lock):
     while unlikely(not c.isConnected):
       debug "Connecting to server", hostname=c.hostname, port=c.port
-      if c.sock != nil:
-        c.sock.close()
       c.sock = newSocket()
       try:
         c.sock.connect(c.hostname, c.port)
@@ -66,16 +64,22 @@ proc recvThread(params: (RxClient, seq[Logger])) {.thread.} =
         var
           buffer = newString(c.bufferSize)
           ret = c.sock.recv(buffer.cstring, c.bufferSize)
-        if ret < 0:
-          debug "Error occurred while receiving", ret
-          c.isConnected = false
-        elif ret == 0:
+        if ret == 0:
           debug "Server closed connection", ret
+          c.sock.close()
+          c.isConnected = false
+        elif ret == -1:
+          let lastError = osLastError()
+          if lastError.int32 in {EWOULDBLOCK, EAGAIN}:
+            continue
+          debug "Error occurred while receiving", ret, lastError
+          c.sock.close()
           c.isConnected = false
         else:
           buffer.setLen(ret)
           c.recvChan[].send(buffer)
     except:
+      c.sock.close()
       c.isConnected = false
       let e = getCurrentException()
       error "Error receiving data", error=e.name, message=e.msg, hostname=c.hostname, port=c.port
@@ -94,6 +98,7 @@ proc sendThread(params: (RxClient, seq[Logger])) {.thread.} =
       message = c.sendChan[].recv()
       c.sock.send(message)
     except:
+      c.sock.close()
       c.isConnected = false
       let e = getCurrentException()
       error "Error sending data", error=e.name, message=e.msg, hostname=c.hostname, port=c.port

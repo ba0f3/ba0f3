@@ -101,6 +101,8 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
             let lastError = osLastError()
             if lastError.int32 in {EWOULDBLOCK, EAGAIN}:
               break
+            let e = getCurrentException()
+            error "Error sending data", error=e.name, message=e.msg, hostname=c.hostname, port=c.port, lastError
             if isDisconnectionError({SocketFlag.SafeDisconn}, lastError):
               handleClientClosure(selector, fd)
             raiseOSError(lastError)
