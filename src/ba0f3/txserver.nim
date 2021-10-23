@@ -89,7 +89,6 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
         if data.getPosition() != 0:
           data.setPosition(0)
           onRequest(selector, fd.SocketHandle, data)
-
       elif Event.Write in events[i].events:
           let leftover = data.sendQueue.len - data.bytesSent
           assert data.bytesSent <= data.sendQueue.len
@@ -102,11 +101,13 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
             if lastError.int32 in {EWOULDBLOCK, EAGAIN}:
               break
             let e = getCurrentException()
-            error "Error sending data", error=e.name, message=e.msg, hostname=c.hostname, port=c.port, lastError
+            error "Error sending data", lastError, error=e.name, message=e.msg
             if isDisconnectionError({SocketFlag.SafeDisconn}, lastError):
               handleClientClosure(selector, fd)
-            raiseOSError(lastError)
+            raiseOSError(lastError, "Error sending data")
           data.bytesSent.inc(ret)
+          if ret != leftover:
+            selector.updateHandle(fd.SocketHandle, {Event.Write})
           if data.sendQueue.len == data.bytesSent:
             data.bytesSent = 0
             data.sendQueue.setLen(0)
