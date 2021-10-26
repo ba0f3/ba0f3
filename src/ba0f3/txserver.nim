@@ -31,13 +31,10 @@ template handleAccept() =
       warn("Ignoring EMFILE error: ", osErrorMsg(lastError))
       return
     raiseOSError(lastError)
-  debug "Incoming connection from", fd=client.int, address=address
   setBlocking(client, false)
   selector.registerHandle(client, {Event.Read}, Data(kind: Client))
 
 template handleClientClosure(selector: Selector[Data], fd: SocketHandle|int, inLoop=true) =
-  let (address, _) = getPeerAddr(fd.SocketHandle, AF_INET)
-  debug "Client disconnected, unregister handler", fd, address
   selector.unregister(fd)
   fd.SocketHandle.close()
   when inLoop:
