@@ -22,7 +22,7 @@ else:
       period: float
       data: Table[T, Data]
 
-proc initRateLimit[T]*(rate: int, periodInSecondds = 1.0, initialSize = 32): RateLimit[T] =
+proc initRateLimit*[T](rate: int, periodInSecondds = 1.0, initialSize = 32): RateLimit[T] =
   result = RateLimit[T](
     rate: rate.float,
     period: periodInSecondds
