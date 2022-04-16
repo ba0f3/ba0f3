@@ -22,6 +22,10 @@ proc hexdump*(data: pointer, length: int) =
       ascii[(i+1) mod 16] = '\0'
       var j = (i+1) mod 16
       while j < 16:
-        stdout.write "    "
+        stdout.write "   "
         inc(j)
       echo "| ", cast[cstring](addr ascii)
+
+when isMainModule:
+  var text = "Cong Hoa Xa Hoi Chu Nghia Viet Nam"
+  hexdump(addr text[0], text.len)
