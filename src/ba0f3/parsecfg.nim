@@ -220,7 +220,7 @@ const
 proc rawGetTok(c: var CfgParser, tok: var Token) {.gcsafe.}
 
 proc open*(c: var CfgParser, input: Stream, filename: string,
-           lineOffset = 0) {.rtl, extern: "npc$1".} =
+           lineOffset = 0) {.rtl, extern: "mynpc$1".} =
   ## Initializes the parser with an input stream. `Filename` is only used
   ## for nice error messages. `lineOffset` can be used to influence the line
   ## number information in the generated error messages.
@@ -231,19 +231,19 @@ proc open*(c: var CfgParser, input: Stream, filename: string,
   inc(c.lineNumber, lineOffset)
   rawGetTok(c, c.tok)
 
-proc close*(c: var CfgParser) {.rtl, extern: "npc$1".} =
+proc close*(c: var CfgParser) {.rtl, extern: "mynpc$1".} =
   ## Closes the parser `c` and its associated input stream.
   lexbase.close(c)
 
-proc getColumn*(c: CfgParser): int {.rtl, extern: "npc$1".} =
+proc getColumn*(c: CfgParser): int {.rtl, extern: "mynpc$1".} =
   ## Gets the current column the parser has arrived at.
   result = getColNumber(c, c.bufpos)
 
-proc getLine*(c: CfgParser): int {.rtl, extern: "npc$1".} =
+proc getLine*(c: CfgParser): int {.rtl, extern: "mynpc$1".} =
   ## Gets the current line the parser has arrived at.
   result = c.lineNumber
 
-proc getFilename*(c: CfgParser): string {.rtl, extern: "npc$1".} =
+proc getFilename*(c: CfgParser): string {.rtl, extern: "mynpc$1".} =
   ## Gets the filename of the file that the parser processes.
   result = c.filename
 
@@ -422,19 +422,19 @@ proc rawGetTok(c: var CfgParser, tok: var Token) =
     tok.literal = "[EOF]"
   else: getSymbol(c, tok)
 
-proc errorStr*(c: CfgParser, msg: string): string {.rtl, extern: "npc$1".} =
+proc errorStr*(c: CfgParser, msg: string): string {.rtl, extern: "mynpc$1".} =
   ## Returns a properly formatted error message containing current line and
   ## column information.
   result = `%`("$1($2, $3) Error: $4",
                 [c.filename, $getLine(c), $getColumn(c), msg])
 
-proc warningStr*(c: CfgParser, msg: string): string {.rtl, extern: "npc$1".} =
+proc warningStr*(c: CfgParser, msg: string): string {.rtl, extern: "mynpc$1".} =
   ## Returns a properly formatted warning message containing current line and
   ## column information.
   result = `%`("$1($2, $3) Warning: $4",
                 [c.filename, $getLine(c), $getColumn(c), msg])
 
-proc ignoreMsg*(c: CfgParser, e: CfgEvent): string {.rtl, extern: "npc$1".} =
+proc ignoreMsg*(c: CfgParser, e: CfgEvent): string {.rtl, extern: "mynpc$1".} =
   ## Returns a properly formatted warning message containing that
   ## an entry is ignored.
   case e.kind
@@ -465,7 +465,7 @@ proc getKeyValPair(c: var CfgParser, kind: CfgEventKind): CfgEvent =
       msg: errorStr(c, "symbol expected, but found: " & c.tok.literal))
     rawGetTok(c, c.tok)
 
-proc next*(c: var CfgParser): CfgEvent {.rtl, extern: "npc$1".} =
+proc next*(c: var CfgParser): CfgEvent {.rtl, extern: "mynpc$1".} =
   ## Retrieves the first/next event. This controls the parser.
   case c.tok.kind
   of tkEof:
