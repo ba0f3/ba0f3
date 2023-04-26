@@ -92,6 +92,7 @@ macro makeProc*(c: static[C], name: string, args: varargs[untyped]): untyped =
   #echo nameMangling
   var pragmas = newNimNode(nnkPragma)
   pragmas.add(ident("importc"))
+  pragmas.add(ident("discardable"))
   pragmas.add(newNimNode(nnkExprColonExpr).
     add(ident("header")).
     #add(c)
@@ -123,7 +124,7 @@ template `.`*(c: static[C], name: untyped, args: varargs[typed]): typed =
 
   var a: int
   call(a, astToStr(name), args)
-  return a
+
 
 
 #template call_ret*(T: typed, body: untyped): void =
@@ -139,6 +140,6 @@ template `=`*(a: untyped) =
 when isMainModule:
   const io = C.includec("<stdio.h>")
   io.printf("Hello world\n")
-  #io.printf("Hello world, again\n")
-  #io.printf("Hello: %s\n", "world")
-  #io.printf("signed: %d  unsigned: %u\n", 10, -1)
+  io.printf("Hello world, again\n")
+  io.printf("Hello: %s\n", "world")
+  io.printf("signed: %d  unsigned: %u\n", 10, -1)

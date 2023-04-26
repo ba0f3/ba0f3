@@ -1,6 +1,6 @@
 import macros, logging, os
 
-export Level, Logger, log, addHandler, getHandlers
+export Level, Logger, log, addHandler, getHandlers, setLogFilter
 var
   logger {.threadvar.}: ConsoleLogger
   fileLogger {.threadvar.}: FileLogger
