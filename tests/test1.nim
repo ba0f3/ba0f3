@@ -1,12 +1,16 @@
-# This is just an example to get you started. You may wish to put all of your
-# tests into a single file, or separate them into multiple `test1`, `test2`
-# etc. files (better names are recommended, just make sure the name starts with
-# the letter 't').
-#
-# To run these tests, simply execute `nimble test`.
+type proc_A_7995805007748477543 = proc (a: int; b: int): int {.cdecl.}
 
-import unittest
+template tmpl_A_7995805007748477543*(a: int; b: int): untyped = cast[proc_A_7995805007748477543](123)(a, b)
 
-import ba0f3
-test "can add":
-  check add(5, 5) == 10
+const
+  var_A_7995805007748477543 = cast[proc_A_7995805007748477543](123)
+
+proc A(a: int; b: int): int {.gcsafe, inline.} =
+  tmpl_A_7995805007748477543(a, b)
+
+var
+  a = 0
+  b = 1
+
+echo A(a, b)
+echo tmpl_A_7995805007748477543(a, b)

@@ -9,8 +9,8 @@ proc fnv32a[T: string|openArray[char]|openArray[uint8]|openArray[int8]](data: T)
     result = result *% 16777619
 
 var
-  #nameToProc {.compileTime.} = initTable[string, string]()
-  nameToPointer {.compileTime.} = initTable[string, string]()
+  nameToPointer {.compileTime.} = initTable[string, uint]()
+  nameToIdent {.compileTime.} = initTable[string, string]()
   seed {.compileTime.} = fnv32a(CompileTime & CompileDate) and 0x7FFFFFFF
   r {.compileTime.} = initRand(seed)
 
@@ -19,9 +19,14 @@ macro faddr*(body: untyped): untyped =
   if input.len > 1:
     let desc = input[1]
     echo desc
-  let name = ident(nameToPointer[input[0]])
-  result = quote do:
-    addr `name`
+  let name = input[0]
+  if nameToPointer.hasKey(name):
+    let address = nameToPointer[name]
+    result = quote do:
+      cast[pointer](`address`)
+  elif nameToIdent.hasKey(name):
+    result = ident(nameToIdent[name])
+
 
 macro fptr*(body: untyped) : untyped =
   ## this marco will create a proc type based on input
@@ -30,88 +35,79 @@ macro fptr*(body: untyped) : untyped =
     return
 
   var
-    name, ptrName, procName: string
+    name, procName: string
     isExported = false
   if body[0].kind == nnkIdent:
     name = $body[0]
   else:
-    #[
-      #echo treeRepr body[0]
-    if body[0].kind == nnkAccQuoted:
-      name = $body[0][0]
-    else:
-      name = $body[0][1]
-    ]#
     name = $body[0][1]
     isExported = true
   var suffix = "_" & $r.next()
   procName = "proc_" & name & suffix
-  ptrName = "var_" & name & suffix
-  #nameToProc[name] = procName
-  if (nameToPointer.hasKey(name)):
-    echo name & " is already defined, this may causes hooking to wrong address"
-  else:
-    nameToPointer[name] = ptrName
+
   var
     typeSection = newNimNode(nnkTypeSection)
     typeDef = newNimNode(nnkTypeDef)
-    varSection = newNimNode(nnkVarSection)
-    identDef = newNimNode(nnkIdentDefs)
     aliasProc = newProc(ident(name))
     pragma = newNimNode(nnkPragma)
+    tmplBody = newStmtList()
+    funcAddress = body[6][0]
+    tmplDef = newEmptyNode()
+    tmplNameIdent: NimNode
 
-  typeSection.add(typeDef)
-  varSection.add(identDef)
+  if (nameToPointer.hasKey(name)):
+    echo name & " is already defined, this may causes hooking to wrong address"
 
   # pragma
   if body[4].kind == nnkPragma:
     pragma = body[4]
+  pragma.add(ident("gcsafe"))
 
   if isExported:
+    let aliasProcName = ident(name)
+    aliasProcName.copyLineInfo(body)
+    aliasProc.name = postfix(aliasProcName, "*")
     typeDef.add(postfix(ident(procName), "*"))
   else:
     typeDef.add(ident(procName))
+
   typeDef.add(newEmptyNode())
   typeDef.add(newNimNode(nnkProcTy)
     .add(body[3]) # FormalParams
     .add(pragma) # pragmas
   )
-  result = newStmtList(typeSection)
+  result = newStmtList(typeSection.add(typeDef))
 
-  if body[6].kind == nnkStmtList and body[6][0].kind == nnkIntLit:
-    if isExported:
-      identDef.add(postfix(ident(ptrName), "*"))
-      let procName = ident(name)
-      procName.copyLineInfo(body)
-      aliasProc.name = postfix(procName, "*")
-    else:
-      let ptrName = ident(ptrName)
-      ptrName.copyLineInfo(body)
-      identDef.add(ptrName)
+  aliasProc.params = body[3]
+  aliasProc.addPragma(ident("inline"))
+  aliasProc.addPragma(ident("gcsafe"))
 
+  if body[6].kind == nnkStmtList:
+    if funcAddress.kind == nnkIntLit:
+      nameToPointer[name] = cast[uint](funcAddress.intVal)
+    elif funcAddress.kind == nnkIdent:
+      nameToIdent[name] = funcAddress.toStrLit.strVal
 
-    identDef.add(newEmptyNode())
-    identDef.add(newNimNode(nnkCast)
+    aliasProc.body = newCall(
+      newNimNode(nnkCast)
       .add(ident(procName))
-      .add(body[6][0])
+      .add(funcAddress)
     )
-
-    var aliasProcBody = newCall(ident(ptrName))
     for param in body[3]:
       if param.kind == nnkIdentDefs:
-        aliasProcBody.add(param[0])
+        aliasProc.body.add(param[0])
 
-    aliasProc.params = body[3]
-    aliasProc.addPragma(ident("inline"))
-    aliasProc.body = aliasProcBody
-
-    result.add(varSection)
-    result.add(aliasProc)
-    #echo treeRepr result
+  result.add(aliasProc)
+  #echo treeRepr result
+  echo repr result
 
 when isMainModule:
   proc NI_Add(a: int, b: int): int = a + b
-  proc A(a: int, b: int): int {.fptr, cdecl.} = 123
-  proc A(a: float, b: float): float {.fptr, cdecl.} = 124
-
-  echo repr(faddr A.NI_Add)
+  proc A*(a: int, b: int): int {.fptr, cdecl.} = NI_Add
+  proc B*(a: int, b: int): int {.fptr, cdecl.} = 123
+  echo "NI_Add ", cast[int](NI_Add)
+  echo "A ", cast[int](A)
+  echo repr(faddr A)
+  echo cast[int](NI_Add) == faddr A
+  echo A(1, 2)
+  echo B(1, 2)
