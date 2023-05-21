@@ -1,11 +1,11 @@
-import selectors, nativesockets, ba0f3/[logger, txserver]
+import selectors, streams, nativesockets, ba0f3/[logger, txserver]
 
 initLogger()
 
-proc processClient(selector: Selector[Data], client: SocketHandle, input: string) {.thread.} =
+proc processClient(selector: Selector[Data], client: SocketHandle, input: StringStream, inputLen: int) {.thread.} =
   if selector != nil and client in selector:
     let data: ptr Data = addr(selector.getData(client))
-    data.sendQueue.add(input)
+    data.sendQueue.add(input.readAll())
     selector.updateHandle(client, {Event.Read, Event.Write})
 
 let settings = Settings(

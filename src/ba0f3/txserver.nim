@@ -21,7 +21,7 @@ type
     numThreads*: int
     loggers*: seq[Logger]
 
-  OnRequest = proc(selector: Selector[Data], client: SocketHandle, data: StringStream) {.gcsafe.}
+  OnRequest = proc(selector: Selector[Data], client: SocketHandle, data: StringStream, dataLen: int) {.gcsafe.}
 
 template handleAccept() =
   let (client, address) = fd.SocketHandle.accept()
@@ -65,7 +65,7 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
       if Event.Read in events[i].events:
         const size = 256
         var buf: array[size, char]
-        var data = newStringStream()
+        var inputStream = newStringStream()
         while true:
           let ret = recv(fd.SocketHandle, addr buf[0], size, 0.cint)
           if ret == 0:
@@ -79,13 +79,14 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
               handleClientClosure(selector, fd)
             raiseOSError(lastError)
           # Write buffer to our data.
-          data.writeData(addr buf[0], ret)
+          inputStream.writeData(addr buf[0], ret)
           if ret != size:
             # Assume there is nothing else for us right now and break.
             break
-        if data.getPosition() != 0:
-          data.setPosition(0)
-          onRequest(selector, fd.SocketHandle, data)
+        let inputLen = inputStream.getPosition()
+        if inputLen != 0:
+          inputStream.setPosition(0)
+          onRequest(selector, fd.SocketHandle, inputStream, inputLen)
       elif Event.Write in events[i].events:
           let leftover = data.sendQueue.len - data.bytesSent
           assert data.bytesSent <= data.sendQueue.len
