@@ -6,8 +6,15 @@ macro faddr*(body: untyped): untyped =
 
   var name = input[input.len - 1]
   if input.len == 2:
-    name = input[0] & "_" & name
-  result = ident("fptr_value_" & name)
+    name = "fptr_value_" & input[0] & "_" & name
+  else:
+    name = "fptr_value_" & name
+  result = newCall(
+    "addr",
+    ident(name)
+  )
+  #echo repr result
+
 
 macro fptr*(body: untyped) : untyped =
   ## this marco will create a proc type based on input
@@ -45,8 +52,8 @@ macro fptr*(body: untyped) : untyped =
     tmplBody = newStmtList()
 
     tmplDef: NimNode
-    tmplValueDef: NimNode
-    tmplValueWithModuleDef: NimNode
+    varValueDef: NimNode
+    varValueWithModuleDef: NimNode
     tmplNameIdent: NimNode
     tmplValueIdent: NimNode
     tmplValueWithModuleIdent: NimNode
@@ -88,16 +95,6 @@ macro fptr*(body: untyped) : untyped =
     tmplBody
   )
 
-  tmplValueDef = nnkTemplateDef.newTree(
-    tmplValueIdent,
-    newEmptyNode(),
-    newEmptyNode(),
-    newEmptyNode(),
-    newEmptyNode(),
-    newEmptyNode(),
-    funcBody
-  )
-
   tmplBody.add(newCall(
     newNimNode(nnkCast)
     .add(ident(procName))
@@ -108,11 +105,22 @@ macro fptr*(body: untyped) : untyped =
     if param.kind == nnkIdentDefs:
       tmplBody[0].add(param[0])
 
-  tmplValueWithModuleDef = tmplValueDef.copy()
-  tmplValueWithModuleDef[0] = tmplValueWithModuleIdent
+
+  varValueDef = nnkVarSection.newTree(
+    nnkIdentDefs.newTree(
+      tmplValueIdent,
+      newEmptyNode(),
+      funcBody
+    )
+  )
+  varValueWithModuleDef = varValueDef[0].copy()
+
+  varValueWithModuleDef[0] = tmplValueWithModuleIdent
+  varValueDef.add(varValueWithModuleDef)
+
   result = newStmtList(typeSection.add(typeDef))
-  result.add(tmplValueDef)
-  result.add(tmplValueWithModuleDef)
+  result.add(varValueDef)
+  #result.add(varValueWithModuleDef)
   result.add(tmplDef)
   #echo treeRepr result
   #echo repr result
