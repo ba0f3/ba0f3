@@ -1,5 +1,7 @@
 from strutils import toHex
 
+converter intToPointer*(x: int): pointer = cast[pointer](x)
+
 proc `$`*(p: pointer): string = "0x" & cast[int](p).toHex()
 
 template `+`*[T](p: ptr T, off: SomeInteger): pointer =
