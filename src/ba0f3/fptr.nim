@@ -1,12 +1,13 @@
-import macros, strutils
+import macros, os, strutils
 import cptr
 
 macro faddr*(body: untyped): untyped =
   let input = ($body.toStrLit).split(".")
-  if input.len > 1:
-    let desc = input[1]
-    echo desc
-  result = ident("fptr_value_" & input[0])
+
+  var name = input[input.len - 1]
+  if input.len == 2:
+    name = input[0] & "_" & name
+  result = ident("fptr_value_" & name)
 
 macro fptr*(body: untyped) : untyped =
   ## this marco will create a proc type based on input
@@ -30,7 +31,12 @@ macro fptr*(body: untyped) : untyped =
     params = body[3]
     funcBody = body[6][0]
     procName = "fptr_proc_" & name
+    moduleName = lineInfoObj(body).filename.splitfile().name
 
+  #var returnType = $params[0].toStrLit
+  #if returnType == "":
+  #  returnType = "void"s
+  #echo "returnType ", returnType
 
   var
     typeSection = newNimNode(nnkTypeSection)
@@ -40,8 +46,10 @@ macro fptr*(body: untyped) : untyped =
 
     tmplDef: NimNode
     tmplValueDef: NimNode
+    tmplValueWithModuleDef: NimNode
     tmplNameIdent: NimNode
     tmplValueIdent: NimNode
+    tmplValueWithModuleIdent: NimNode
     procNameIdent: NimNode
 
   # pragma
@@ -51,13 +59,18 @@ macro fptr*(body: untyped) : untyped =
 
   procNameIdent = ident(procName)
   tmplNameIdent = ident(name)
-  tmplNameIdent.copyLineInfo(body)
   tmplValueIdent = ident("fptr_value_" & name)
+  tmplValueWithModuleIdent = ident("fptr_value_" & moduleName & "_" & name)
+
+  procNameIdent.copyLineInfo(body)
+  tmplNameIdent.copyLineInfo(body)
+  tmplValueWithModuleIdent.copyLineInfo(body)
 
   if isExported:
     procNameIdent = postfix(procNameIdent, "*")
     tmplNameIdent = postfix(tmplNameIdent, "*")
     tmplValueIdent = postfix(tmplValueIdent, "*")
+    tmplValueWithModuleIdent = postfix(tmplValueWithModuleIdent, "*")
 
   typeDef.add(procNameIdent)
   typeDef.add(newEmptyNode())
@@ -90,24 +103,17 @@ macro fptr*(body: untyped) : untyped =
     .add(ident(procName))
     .add(funcBody)
   ))
+
   for param in body[3]:
     if param.kind == nnkIdentDefs:
       tmplBody[0].add(param[0])
+
+  tmplValueWithModuleDef = tmplValueDef.copy()
+  tmplValueWithModuleDef[0] = tmplValueWithModuleIdent
   result = newStmtList(typeSection.add(typeDef))
   result.add(tmplValueDef)
+  result.add(tmplValueWithModuleDef)
   result.add(tmplDef)
   #echo treeRepr result
   #echo repr result
 
-when isMainModule:
-  proc NI_Add(a: int, b: int): int = a + b
-  proc A*(a: int, b: int): int {.fptr, cdecl.} = NI_Add
-  proc B*(a: int, b: int): int {.fptr, cdecl.} = cast[pointer](NI_Add)
-  proc C*(a: int, b: int): int {.fptr, cdecl.} = 123
-  echo "NI_Add => ", cast[int](NI_Add)
-  #echo "A ", cast[int](A)
-  echo "repr(faddr A) => ", repr(faddr A)
-  echo "cast[int](NI_Add) == faddr A => ", cast[int](NI_Add) == faddr A
-  echo "A(1, 2) => ", A(1, 2)
-  echo "B(1, 2) => ", B(1, 2)
-  echo "C(1, 2) => ", C(1, 2)
