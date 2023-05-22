@@ -113,7 +113,7 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
       else:
         assert false
 
-proc eventLoop(params: (Settings, OnRequest)) {.nimcall, gcsafe.} =
+proc eventLoop(params: (Settings, OnRequest)) {.thread.} =
   let (settings, onRequest) = params
 
   for logger in settings.loggers:
@@ -140,7 +140,7 @@ proc eventLoop(params: (Settings, OnRequest)) {.nimcall, gcsafe.} =
     if unlikely(asyncdispatch.getGlobalDispatcher().callbacks.len > 0):
       asyncdispatch.poll(0)
 
-proc runServer*(settings: Settings, onRequest: OnRequest) =
+proc runServer*(settings: Settings, onRequest: OnRequest, bJoinThreads = false) =
   when compileOption("threads"):
     let numThreads =
       if settings.numThreads == 0: countProcessors()
@@ -155,7 +155,8 @@ proc runServer*(settings: Settings, onRequest: OnRequest) =
       for i in 0 ..< numThreads:
         createThread(threads[i], eventLoop, (settings, onRequest))
       info "Listening", port=settings.port
-      joinThreads(threads)
+      if bJoinThreads:
+        joinThreads(threads)
     else:
       assert false
   else:

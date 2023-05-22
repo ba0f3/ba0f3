@@ -5,15 +5,18 @@ macro faddr*(body: untyped): untyped =
   let input = ($body.toStrLit).split(".")
 
   var name = input[input.len - 1]
+  var ident1: NimNode
   if input.len == 2:
-    name = "fptr_value_" & input[0] & "_" & name
+    ident1 = ident("fptr_value_" & input[0] & "_" & name)
   else:
-    name = "fptr_value_" & name
-  result = newCall(
-    "addr",
-    ident(name)
-  )
-  #echo repr result
+    ident1 = ident("fptr_value_" & name)
+  #result = newCall(
+  #  "addr",
+  #  ident(name)
+  #)
+  result = quote do:
+    addr `ident1`
+  echo repr result
 
 
 macro fptr*(body: untyped) : untyped =
@@ -95,22 +98,27 @@ macro fptr*(body: untyped) : untyped =
     tmplBody
   )
 
+  #tmplBody.add(newCall(
+  #  newNimNode(nnkCast)
+  #  .add(ident(procName))
+  #  .add(funcBody)
+  #))
   tmplBody.add(newCall(
-    newNimNode(nnkCast)
-    .add(ident(procName))
-    .add(funcBody)
+    tmplValueWithModuleIdent
   ))
 
   for param in body[3]:
     if param.kind == nnkIdentDefs:
       tmplBody[0].add(param[0])
 
-
   varValueDef = nnkVarSection.newTree(
     nnkIdentDefs.newTree(
       tmplValueIdent,
       newEmptyNode(),
-      funcBody
+      #funcBody
+      newNimNode(nnkCast)
+      .add(ident(procName))
+      .add(body[6][0])
     )
   )
   varValueWithModuleDef = varValueDef[0].copy()
@@ -120,8 +128,7 @@ macro fptr*(body: untyped) : untyped =
 
   result = newStmtList(typeSection.add(typeDef))
   result.add(varValueDef)
-  #result.add(varValueWithModuleDef)
   result.add(tmplDef)
   #echo treeRepr result
-  #echo repr result
+  echo repr result
 
