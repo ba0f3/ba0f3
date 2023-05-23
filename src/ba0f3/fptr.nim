@@ -1,42 +1,62 @@
-import macros, os, strutils
-from cptr import intToPointer
+import macros, random, tables, strutils
+
+converter toPointer*(x: int): pointer = cast[pointer](x)
+
+proc fnv32a[T: string|openArray[char]|openArray[uint8]|openArray[int8]](data: T): int32 =
+  result = -18652613'i32
+  for b in items(data):
+    result = result xor ord(b).int32
+    result = result *% 16777619
+
+var
+  #nameToProc {.compileTime.} = initTable[string, string]()
+  nameToPointer {.compileTime.} = initTable[string, string]()
+  seed {.compileTime.} = fnv32a(CompileTime & CompileDate) and 0x7FFFFFFF
+  r {.compileTime.} = initRand(seed)
 
 macro faddr*(body: untyped): untyped =
   let input = ($body.toStrLit).split(".")
-
-  var name: NimNode
-  if input.len == 2:
-    name = ident("fptr_var_" & input[0] & "_" & input[input.len - 1])
-  else:
-    name = ident("fptr_var_" & input[input.len - 1])
+  if input.len > 1:
+    let desc = input[1]
+    echo desc
+  let name = ident(nameToPointer[input[0]])
   result = quote do:
     addr `name`
-  echo repr result
 
 macro fptr*(body: untyped) : untyped =
   ## this marco will create a proc type based on input
   ## and then create a proc pointer to an address if specified
-  if body.kind != nnkProcDef or body[6].kind == nnkEmpty:
+  if body.kind != nnkProcDef:
     return
 
-  let
-    moduleName = lineInfoObj(body).filename.splitfile().name
-    isExported = if body[0].kind == nnkIdent: true else: false
-    name = if isExported: $body[0] else: $body[0][1]
-    params = body[3]
-    funcBody = body[6][0]
-
   var
-    procName = ident("fptr_proc_" & name)
-    varName = ident("fptr_var_" & name)
-    varName2 = ident("fptr_var_" & modulename & "_" & name)
-
+    name, ptrName, procName: string
+    isExported = false
+  if body[0].kind == nnkIdent:
+    name = $body[0]
+  else:
+    #[
+      #echo treeRepr body[0]
+    if body[0].kind == nnkAccQuoted:
+      name = $body[0][0]
+    else:
+      name = $body[0][1]
+    ]#
+    name = $body[0][1]
+    isExported = true
+  var suffix = "_" & $r.next()
+  procName = "proc_" & name & suffix
+  ptrName = "var_" & name & suffix
+  #nameToProc[name] = procName
+  if (nameToPointer.hasKey(name)):
+    echo name & " is already defined, this may causes hooking to wrong address"
+  else:
+    nameToPointer[name] = ptrName
+  var
     typeSection = newNimNode(nnkTypeSection)
     typeDef = newNimNode(nnkTypeDef)
     varSection = newNimNode(nnkVarSection)
     identDef = newNimNode(nnkIdentDefs)
-    identDef2 = newNimNode(nnkIdentDefs)
-    ident2: NimNode
     aliasProc = newProc(ident(name))
     pragma = newNimNode(nnkPragma)
 
@@ -49,57 +69,46 @@ macro fptr*(body: untyped) : untyped =
   pragma.add(ident("gcsafe"))
 
   if isExported:
-    typeDef.add(postfix(procName, "*"))
+    typeDef.add(postfix(ident(procName), "*"))
   else:
-    typeDef.add(procName)
+    typeDef.add(ident(procName))
   typeDef.add(newEmptyNode())
   typeDef.add(newNimNode(nnkProcTy)
-    .add(params) # FormalParams
+    .add(body[3]) # FormalParams
     .add(pragma) # pragmas
   )
-
-  var aliasProcBody = newCall(varName)
-
-  if isExported:
-    identDef.add(postfix(varName, "*"))
-    varName2 = postfix(varName2, "*")
-    let procName = ident(name)
-
-    aliasProc.name = postfix(procName, "*")
-  else:
-    identDef.add(varName)
-
-  procName.copyLineInfo(body)
-  varName.copyLineInfo(body)
-  varName2.copyLineInfo(body)
-
-  identDef.add(newEmptyNode())
-  identDef.add(newNimNode(nnkCast)
-    .add(procName)
-    .add(funcBody)
-  )
-
-  #identDef2 = identDef.copy()
-  #identDef2[0] = varName2
-  identDef2.add(varName2)
-  identDef2.add(newEmptyNode())
-  identDef2.add(varName)
-  varSection.add(identDef2)
-
-
-  for param in params:
-    if param.kind == nnkIdentDefs:
-      aliasProcBody.add(param[0])
-
-  aliasProc.params = params
-  aliasProc.addPragma(ident("inline"))
-  aliasProc.body = aliasProcBody
-
   result = newStmtList(typeSection)
-  result.add(varSection)
-  result.add(aliasProc)
-  #echo treeRepr result
-  echo repr result
+
+  if body[6].kind == nnkStmtList and body[6][0].kind == nnkIntLit:
+    if isExported:
+      identDef.add(postfix(ident(ptrName), "*"))
+      let procName = ident(name)
+      procName.copyLineInfo(body)
+      aliasProc.name = postfix(procName, "*")
+    else:
+      let ptrName = ident(ptrName)
+      ptrName.copyLineInfo(body)
+      identDef.add(ptrName)
+
+
+    identDef.add(newEmptyNode())
+    identDef.add(newNimNode(nnkCast)
+      .add(ident(procName))
+      .add(body[6][0])
+    )
+
+    var aliasProcBody = newCall(ident(ptrName))
+    for param in body[3]:
+      if param.kind == nnkIdentDefs:
+        aliasProcBody.add(param[0])
+
+    aliasProc.params = body[3]
+    aliasProc.addPragma(ident("inline"))
+    aliasProc.body = aliasProcBody
+
+    result.add(varSection)
+    result.add(aliasProc)
+    #echo treeRepr result
 
 when isMainModule:
   proc NI_Add(a: int, b: int): int = a + b
