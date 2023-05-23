@@ -1,134 +1,109 @@
 import macros, os, strutils
-import cptr
+from cptr import intToPointer
 
 macro faddr*(body: untyped): untyped =
   let input = ($body.toStrLit).split(".")
 
-  var name = input[input.len - 1]
-  var ident1: NimNode
+  var name: NimNode
   if input.len == 2:
-    ident1 = ident("fptr_value_" & input[0] & "_" & name)
+    name = ident("fptr_var_" & input[0] & "_" & input[input.len - 1])
   else:
-    ident1 = ident("fptr_value_" & name)
-  #result = newCall(
-  #  "addr",
-  #  ident(name)
-  #)
+    name = ident("fptr_var_" & input[input.len - 1])
   result = quote do:
-    addr `ident1`
+    addr `name`
   echo repr result
-
 
 macro fptr*(body: untyped) : untyped =
   ## this marco will create a proc type based on input
   ## and then create a proc pointer to an address if specified
-  if body.kind != nnkProcDef: return
-
-  var
-    name: string
-    isExported = false
-
-  if body[0].kind == nnkIdent:
-    name = $body[0]
-  else:
-    name = $body[0][1]
-    isExported = true
-
-  if body[6].kind == nnkEmpty:
-    raise newException(ValueError, "function pointer require a expr which converts to a pointer")
+  if body.kind != nnkProcDef or body[6].kind == nnkEmpty:
+    return
 
   let
+    moduleName = lineInfoObj(body).filename.splitfile().name
+    isExported = if body[0].kind == nnkIdent: true else: false
+    name = if isExported: $body[0] else: $body[0][1]
     params = body[3]
     funcBody = body[6][0]
-    procName = "fptr_proc_" & name
-    moduleName = lineInfoObj(body).filename.splitfile().name
-
-  #var returnType = $params[0].toStrLit
-  #if returnType == "":
-  #  returnType = "void"s
-  #echo "returnType ", returnType
 
   var
+    procName = ident("fptr_proc_" & name)
+    varName = ident("fptr_var_" & name)
+    varName2 = ident("fptr_var_" & modulename & "_" & name)
+
     typeSection = newNimNode(nnkTypeSection)
     typeDef = newNimNode(nnkTypeDef)
+    varSection = newNimNode(nnkVarSection)
+    identDef = newNimNode(nnkIdentDefs)
+    identDef2 = newNimNode(nnkIdentDefs)
+    ident2: NimNode
+    aliasProc = newProc(ident(name))
     pragma = newNimNode(nnkPragma)
-    tmplBody = newStmtList()
 
-    tmplDef: NimNode
-    varValueDef: NimNode
-    varValueWithModuleDef: NimNode
-    tmplNameIdent: NimNode
-    tmplValueIdent: NimNode
-    tmplValueWithModuleIdent: NimNode
-    procNameIdent: NimNode
+  typeSection.add(typeDef)
+  varSection.add(identDef)
 
   # pragma
   if body[4].kind == nnkPragma:
     pragma = body[4]
   pragma.add(ident("gcsafe"))
 
-  procNameIdent = ident(procName)
-  tmplNameIdent = ident(name)
-  tmplValueIdent = ident("fptr_value_" & name)
-  tmplValueWithModuleIdent = ident("fptr_value_" & moduleName & "_" & name)
-
-  procNameIdent.copyLineInfo(body)
-  tmplNameIdent.copyLineInfo(body)
-  tmplValueWithModuleIdent.copyLineInfo(body)
-
   if isExported:
-    procNameIdent = postfix(procNameIdent, "*")
-    tmplNameIdent = postfix(tmplNameIdent, "*")
-    tmplValueIdent = postfix(tmplValueIdent, "*")
-    tmplValueWithModuleIdent = postfix(tmplValueWithModuleIdent, "*")
-
-  typeDef.add(procNameIdent)
+    typeDef.add(postfix(procName, "*"))
+  else:
+    typeDef.add(procName)
   typeDef.add(newEmptyNode())
   typeDef.add(newNimNode(nnkProcTy)
     .add(params) # FormalParams
     .add(pragma) # pragmas
   )
-  tmplDef = nnkTemplateDef.newTree(
-    tmplNameIdent,
-    newEmptyNode(),
-    newEmptyNode(),
-    params,
-    newEmptyNode(),
-    newEmptyNode(),
-    tmplBody
+
+  var aliasProcBody = newCall(varName)
+
+  if isExported:
+    identDef.add(postfix(varName, "*"))
+    varName2 = postfix(varName2, "*")
+    let procName = ident(name)
+
+    aliasProc.name = postfix(procName, "*")
+  else:
+    identDef.add(varName)
+
+  procName.copyLineInfo(body)
+  varName.copyLineInfo(body)
+  varName2.copyLineInfo(body)
+
+  identDef.add(newEmptyNode())
+  identDef.add(newNimNode(nnkCast)
+    .add(procName)
+    .add(funcBody)
   )
 
-  #tmplBody.add(newCall(
-  #  newNimNode(nnkCast)
-  #  .add(ident(procName))
-  #  .add(funcBody)
-  #))
-  tmplBody.add(newCall(
-    tmplValueWithModuleIdent
-  ))
+  #identDef2 = identDef.copy()
+  #identDef2[0] = varName2
+  identDef2.add(varName2)
+  identDef2.add(newEmptyNode())
+  identDef2.add(varName)
+  varSection.add(identDef2)
 
-  for param in body[3]:
+
+  for param in params:
     if param.kind == nnkIdentDefs:
-      tmplBody[0].add(param[0])
+      aliasProcBody.add(param[0])
 
-  varValueDef = nnkVarSection.newTree(
-    nnkIdentDefs.newTree(
-      tmplValueIdent,
-      newEmptyNode(),
-      #funcBody
-      newNimNode(nnkCast)
-      .add(ident(procName))
-      .add(body[6][0])
-    )
-  )
-  varValueWithModuleDef = varValueDef[0].copy()
+  aliasProc.params = params
+  aliasProc.addPragma(ident("inline"))
+  aliasProc.body = aliasProcBody
 
-  varValueWithModuleDef[0] = tmplValueWithModuleIdent
-  varValueDef.add(varValueWithModuleDef)
-
-  result = newStmtList(typeSection.add(typeDef))
-  result.add(varValueDef)
-  result.add(tmplDef)
+  result = newStmtList(typeSection)
+  result.add(varSection)
+  result.add(aliasProc)
   #echo treeRepr result
   echo repr result
 
+when isMainModule:
+  proc NI_Add(a: int, b: int): int = a + b
+  proc A(a: int, b: int): int {.fptr, cdecl.} = 123
+  proc A(a: float, b: float): float {.fptr, cdecl.} = 124
+
+  echo repr(faddr A.NI_Add)
