@@ -1,25 +1,13 @@
-import macros, random, tables, strutils
+import macros, random, strutils
 
 converter toPointer*(x: int): pointer = cast[pointer](x)
-
-proc fnv32a[T: string|openArray[char]|openArray[uint8]|openArray[int8]](data: T): int32 =
-  result = -18652613'i32
-  for b in items(data):
-    result = result xor ord(b).int32
-    result = result *% 16777619
-
-var
-  #nameToProc {.compileTime.} = initTable[string, string]()
-  nameToPointer {.compileTime.} = initTable[string, string]()
-  seed {.compileTime.} = fnv32a(CompileTime & CompileDate) and 0x7FFFFFFF
-  r {.compileTime.} = initRand(seed)
 
 macro faddr*(body: untyped): untyped =
   let input = ($body.toStrLit).split(".")
   if input.len > 1:
     let desc = input[1]
     echo desc
-  let name = ident(nameToPointer[input[0]])
+  let name = ident("fptr_var_" & input[input.len - 1])
   result = quote do:
     addr `name`
 
@@ -44,14 +32,9 @@ macro fptr*(body: untyped) : untyped =
     ]#
     name = $body[0][1]
     isExported = true
-  var suffix = "_" & $r.next()
-  procName = "proc_" & name & suffix
-  ptrName = "var_" & name & suffix
-  #nameToProc[name] = procName
-  if (nameToPointer.hasKey(name)):
-    echo name & " is already defined, this may causes hooking to wrong address"
-  else:
-    nameToPointer[name] = ptrName
+  procName = "fptr_proc_" & name
+  ptrName = "fptr_var_" & name
+
   var
     typeSection = newNimNode(nnkTypeSection)
     typeDef = newNimNode(nnkTypeDef)
