@@ -2,7 +2,7 @@
   Multi-threaded TCP server, borrowed from httpbeast
   https://github.com/dom96/httpbeast/blob/master/src/httpbeast.nim
 ]#
-import asyncdispatch, asynchttpserver, nativesockets, streams, times, sim, strutils, tables, httpclient, selectors, net, os, osproc, deques, locks
+import asyncdispatch, asynchttpserver, nativesockets, streams, times, strutils, selectors, net, os, osproc, deques
 from asyncnet import close
 import ba0f3/logger
 
@@ -14,47 +14,53 @@ type
     kind: FdKind
     sendQueue*: string
     bytesSent: int
+    lastPacketRecveived*: DateTime
 
   Settings* = object
     port*: int
     bindAddr*: string
+    clientTimeoutInSeconds*: int = 60
     numThreads*: int
     loggers*: seq[Logger]
 
   OnRequest = proc(selector: Selector[Data], client: SocketHandle, data: StringStream, dataLen: int) {.gcsafe.}
+  OnConnect = proc(selector: Selector[Data], client: SocketHandle) {.gcsafe.}
+  OnDisconnect = proc(selector: Selector[Data], client: SocketHandle) {.gcsafe.}
 
-template handleAccept() =
-  let (client, address) = fd.SocketHandle.accept()
-  if client == osInvalidSocket:
-    let lastError = osLastError()
-    if lastError.int32 == 24:
-      warn("Ignoring EMFILE error: ", osErrorMsg(lastError))
-      return
-    raiseOSError(lastError)
-  setBlocking(client, false)
-  selector.registerHandle(client, {Event.Read}, Data(kind: Client))
-
-template handleClientClosure(selector: Selector[Data], fd: SocketHandle|int, inLoop=true) =
+template handleClientClosure(selector: Selector[Data], fd: SocketHandle|int) =
+  if onDisconnect != nil:
+    onDisconnect(selector, fd.SocketHandle)
   selector.unregister(fd)
   fd.SocketHandle.close()
-  when inLoop:
-    break
-  else:
-    return
 
-proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count: int, onRequest: OnRequest) {.thread.} =
+proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count: int, clientList: var seq[SocketHandle], onRequest: OnRequest, onConnect: OnConnect, onDisconnect: OnDisconnect) {.thread.} =
   for i in 0 ..< count:
     let
       fd = events[i].fd
-      data: ptr Data = addr(selector.getData(fd))
+      data = addr(selector.getData(fd))
     if Event.Error in events[i].events:
       if isDisconnectionError({SocketFlag.SafeDisconn}, events[i].errorCode):
         handleClientClosure(selector, fd)
+        continue
       raiseOSError(events[i].errorCode)
     case data.kind:
     of Server:
       if Event.Read in events[i].events:
-        handleAccept()
+        let (client, _) = fd.SocketHandle.accept()
+        if client == osInvalidSocket:
+          let lastError = osLastError()
+          if lastError.int32 == 24:
+            warn("Ignoring EMFILE error: ", osErrorMsg(lastError))
+            return
+          raiseOSError(lastError)
+        setBlocking(client, false)
+        selector.registerHandle(client, {Event.Read}, Data(
+          kind: Client,
+          lastPacketRecveived: now()
+        ))
+        clientList.add(client)
+        if onConnect != nil:
+          onConnect(selector, client)
       else:
         assert false, "Only Read events are expected for the server"
     of Dispatcher:
@@ -70,14 +76,19 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
           let ret = recv(fd.SocketHandle, addr buf[0], size, 0.cint)
           if ret == 0:
             handleClientClosure(selector, fd)
-          if ret == -1:
+            break
+          elif ret == -1:
             # Error!
             let lastError = osLastError()
             if lastError.int32 in {EWOULDBLOCK, EAGAIN}:
               break
             if isDisconnectionError({SocketFlag.SafeDisconn}, lastError):
               handleClientClosure(selector, fd)
+              break
             raiseOSError(lastError)
+
+          data.lastPacketRecveived = now()
+
           # Write buffer to our data.
           inputStream.writeData(addr buf[0], ret)
           if ret != size:
@@ -88,39 +99,41 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
           inputStream.setPosition(0)
           onRequest(selector, fd.SocketHandle, inputStream, inputLen)
       elif Event.Write in events[i].events:
-          let leftover = data.sendQueue.len - data.bytesSent
-          assert data.bytesSent <= data.sendQueue.len
-          if leftover <= 0:
+        let leftover = data.sendQueue.len - data.bytesSent
+        assert data.bytesSent <= data.sendQueue.len
+        if leftover <= 0:
+          break
+        let ret = send(fd.SocketHandle, addr data.sendQueue[data.bytesSent], leftover, 0)
+        if ret == -1:
+          # Error!
+          let lastError = osLastError()
+          if lastError.int32 in {EWOULDBLOCK, EAGAIN}:
             break
-          let ret = send(fd.SocketHandle, addr data.sendQueue[data.bytesSent], leftover, 0)
-          if ret == -1:
-            # Error!
-            let lastError = osLastError()
-            if lastError.int32 in {EWOULDBLOCK, EAGAIN}:
-              break
-            let e = getCurrentException()
-            error "Error sending data", lastError, error=e.name, message=e.msg
-            if isDisconnectionError({SocketFlag.SafeDisconn}, lastError):
-              handleClientClosure(selector, fd)
-            raiseOSError(lastError, "Error sending data")
-          data.bytesSent.inc(ret)
-          if ret != leftover:
-            selector.updateHandle(fd.SocketHandle, {Event.Write})
-          if data.sendQueue.len == data.bytesSent:
-            data.bytesSent = 0
-            data.sendQueue.setLen(0)
-            selector.updateHandle(fd.SocketHandle, {Event.Read})
+          let e = getCurrentException()
+          error "Error sending data", lastError, error=e.name, message=e.msg
+          if isDisconnectionError({SocketFlag.SafeDisconn}, lastError):
+            handleClientClosure(selector, fd)
+            break
+          raiseOSError(lastError, "Error sending data")
+        data.bytesSent.inc(ret)
+        if ret != leftover:
+          selector.updateHandle(fd.SocketHandle, {Event.Write})
+        if data.sendQueue.len == data.bytesSent:
+          data.bytesSent = 0
+          data.sendQueue.setLen(0)
+          selector.updateHandle(fd.SocketHandle, {Event.Read})
       else:
         assert false
 
-proc eventLoop(params: (Settings, OnRequest)) {.thread.} =
-  let (settings, onRequest) = params
+proc eventLoop(params: (Settings, OnRequest, OnConnect, OnDisconnect)) {.thread.} =
+  let (settings, onRequest, onConnect, onDisconnect) = params
 
   for logger in settings.loggers:
     addHandler(logger)
 
-  let
+  var
     selector = newSelector[Data]()
+    clientList: seq[SocketHandle]
     server = newSocket()
 
   server.setSockOpt(OptReuseAddr, true)
@@ -130,17 +143,36 @@ proc eventLoop(params: (Settings, OnRequest)) {.thread.} =
   server.getFd().setBlocking(false)
   selector.registerHandle(server.getFd(), {Event.Read}, Data(kind: Server))
 
+
   let disp = getGlobalDispatcher()
   selector.registerHandle(getIoHandler(disp).getFd(), {Event.Read}, Data(kind: Dispatcher))
 
   var events: array[64, ReadyKey]
   while true:
-    let ret = selector.selectInto(-1, events)
-    processEvents(selector, events, ret, onRequest)
-    if unlikely(asyncdispatch.getGlobalDispatcher().callbacks.len > 0):
-      asyncdispatch.poll(0)
+    let ret = selector.selectInto(500, events)
+    if ret > 0:
+      processEvents(selector, events, ret, clientList, onRequest, onConnect, onDisconnect)
+    elif settings.clientTimeoutInSeconds > 0 and not selector.isEmpty():
+      var
+        data: ptr Data
+        t = now()
+        duration = initDuration(seconds=settings.clientTimeoutInSeconds)
+      for i in 0..<clientList.len:
+        if selector.contains(clientList[i]):
+          data = addr(selector.getData(clientList[i]))
+          let timeout = t - data.lastPacketRecveived
+          if timeout > duration:
+            debug "Closing inactive client", client=clientList[i].int, ping=timeout.inSeconds
+            handleClientClosure(selector, clientList[i])
+            break
+        else:
+          clientList.del(i)
+          break
 
-proc runServer*(settings: Settings, onRequest: OnRequest, bJoinThreads = false) =
+    if unlikely(asyncdispatch.getGlobalDispatcher().callbacks.len > 0):
+        asyncdispatch.poll(0)
+
+proc runServer*(settings: Settings, onRequest: OnRequest, onConnect: OnConnect = nil, onDisconnect: OnDisconnect, bJoinThreads = false) =
   when compileOption("threads"):
     let numThreads =
       if settings.numThreads == 0: countProcessors()
@@ -148,16 +180,16 @@ proc runServer*(settings: Settings, onRequest: OnRequest, bJoinThreads = false) 
   else:
     let numThreads = 1
 
-  info "Starting", numThreads
+  info "Listening", bindAddr=settings.bindAddr, port=settings.port, threads=numThreads
   if numThreads > 1:
     when compileOption("threads"):
-      var threads = newSeq[Thread[(Settings, OnRequest)]](numThreads)
+      var threads = newSeq[Thread[(Settings, OnRequest, OnConnect, OnDisconnect)]](numThreads)
       for i in 0 ..< numThreads:
-        createThread(threads[i], eventLoop, (settings, onRequest))
-      info "Listening", port=settings.port
+        createThread(threads[i], eventLoop, (settings, onRequest, onConnect, onDisconnect))
+
       if bJoinThreads:
         joinThreads(threads)
     else:
       assert false
   else:
-    eventLoop((settings, onRequest))
+    eventLoop((settings, onRequest, onConnect, onDisconnect))
