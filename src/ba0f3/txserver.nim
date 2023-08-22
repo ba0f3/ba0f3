@@ -2,7 +2,7 @@
   Multi-threaded TCP server, borrowed from httpbeast
   https://github.com/dom96/httpbeast/blob/master/src/httpbeast.nim
 ]#
-import asyncdispatch, asynchttpserver, nativesockets, streams, times, strutils, selectors, net, os, osproc, deques
+import asyncdispatch, asynchttpserver, nativesockets, times, strutils, selectors, net, os, osproc, deques
 from asyncnet import close
 import ba0f3/logger
 
@@ -13,6 +13,7 @@ type
   Data* = object
     kind: FdKind
     sendQueue*: string
+    recvQueue*: string
     bytesSent: int
     lastPacketRecveived*: DateTime
 
@@ -23,9 +24,7 @@ type
     numThreads*: int
     loggers*: seq[Logger]
 
-  OnRequest = proc(selector: Selector[Data], client: SocketHandle, data: StringStream, dataLen: int) {.gcsafe.}
-  OnConnect = proc(selector: Selector[Data], client: SocketHandle) {.gcsafe.}
-  OnDisconnect = proc(selector: Selector[Data], client: SocketHandle) {.gcsafe.}
+  Callback = proc(selector: Selector[Data], client: SocketHandle) {.gcsafe.}
 
 template handleClientClosure(selector: Selector[Data], fd: SocketHandle|int) =
   if onDisconnect != nil:
@@ -33,7 +32,7 @@ template handleClientClosure(selector: Selector[Data], fd: SocketHandle|int) =
   selector.unregister(fd)
   fd.SocketHandle.close()
 
-proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count: int, clientList: var seq[SocketHandle], onRequest: OnRequest, onConnect: OnConnect, onDisconnect: OnDisconnect) {.thread.} =
+proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count: int, clientList: var seq[SocketHandle], onRequest: Callback, onConnect: Callback, onDisconnect: Callback) {.thread.} =
   for i in 0 ..< count:
     let
       fd = events[i].fd
@@ -70,10 +69,11 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
     of Client:
       if Event.Read in events[i].events:
         const size = 256
-        var buf: array[size, char]
-        var inputStream = newStringStream()
+        var
+          buf: array[size, char]
+          ret: int
         while true:
-          let ret = recv(fd.SocketHandle, addr buf[0], size, 0.cint)
+          ret = recv(fd.SocketHandle, addr buf[0], size, 0.cint)
           if ret == 0:
             handleClientClosure(selector, fd)
             break
@@ -90,14 +90,16 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
           data.lastPacketRecveived = now()
 
           # Write buffer to our data.
-          inputStream.writeData(addr buf[0], ret)
+          let origLen = data.recvQueue.len
+          data.recvQueue.setLen(origLen + ret)
+          for i in 0 ..< ret:
+            data.recvQueue[origLen+i] = buf[i]
           if ret != size:
             # Assume there is nothing else for us right now and break.
             break
-        let inputLen = inputStream.getPosition()
-        if inputLen != 0:
-          inputStream.setPosition(0)
-          onRequest(selector, fd.SocketHandle, inputStream, inputLen)
+        if data.recvQueue.len > 0 and onRequest != nil:
+          onRequest(selector, fd.SocketHandle)
+        data.recvQueue.setLen(0)
       elif Event.Write in events[i].events:
         let leftover = data.sendQueue.len - data.bytesSent
         assert data.bytesSent <= data.sendQueue.len
@@ -125,7 +127,7 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
       else:
         assert false
 
-proc eventLoop(params: (Settings, OnRequest, OnConnect, OnDisconnect)) {.thread.} =
+proc eventLoop(params: (Settings, Callback, Callback, Callback)) {.thread.} =
   let (settings, onRequest, onConnect, onDisconnect) = params
 
   for logger in settings.loggers:
@@ -172,7 +174,7 @@ proc eventLoop(params: (Settings, OnRequest, OnConnect, OnDisconnect)) {.thread.
     if unlikely(asyncdispatch.getGlobalDispatcher().callbacks.len > 0):
         asyncdispatch.poll(0)
 
-proc runServer*(settings: Settings, onRequest: OnRequest, onConnect: OnConnect = nil, onDisconnect: OnDisconnect, bJoinThreads = false) =
+proc runServer*(settings: Settings, onRequest: Callback, onConnect: Callback = nil, onDisconnect: Callback, bJoinThreads = false) =
   when compileOption("threads"):
     let numThreads =
       if settings.numThreads == 0: countProcessors()
@@ -183,7 +185,7 @@ proc runServer*(settings: Settings, onRequest: OnRequest, onConnect: OnConnect =
   info "Listening", bindAddr=settings.bindAddr, port=settings.port, threads=numThreads
   if numThreads > 1:
     when compileOption("threads"):
-      var threads = newSeq[Thread[(Settings, OnRequest, OnConnect, OnDisconnect)]](numThreads)
+      var threads = newSeq[Thread[(Settings, Callback, Callback, Callback)]](numThreads)
       for i in 0 ..< numThreads:
         createThread(threads[i], eventLoop, (settings, onRequest, onConnect, onDisconnect))
 
