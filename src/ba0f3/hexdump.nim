@@ -1,4 +1,5 @@
 from strutils import toHex, repeat
+import logger
 
 proc hexdump*(data: pointer, length: int) =
   ## Print hex dump for a block of data

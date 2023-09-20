@@ -32,9 +32,13 @@ proc initRateLimit*[T](rate: int, periodInSecondds = 1.0, initialSize = 32): Rat
   else:
     result.data = initTable[T, Data](initialSize)
 
-proc `=destroy`*[T](r: var RateLimit[T]) =
-  when compileOption("threads"):
-     deinitSharedTable(r.data)
+proc deinitRateLimit*[T](r: var RateLimit[T]) =
+  deinitSharedTable(r.data)
+
+#proc `=destroy`*[T](r: var RateLimit[T]) =
+#  when compileOption("threads"):
+#    deinitSharedTable(r.data)
+
 
 template process(d: typed) =
   d.allowance += timePassed * (rate / period)
