@@ -1,98 +1,101 @@
-import macros
+import macros, random, strutils
 
 converter toPointer*(x: int): pointer = cast[pointer](x)
 
-template fptrAddr*(address: int) {.pragma.}
-template fptrVar*(name: typed): string {.pragma.}
+macro faddr*(body: untyped): untyped =
+  let input = ($body.toStrLit).split(".")
+  if input.len > 1:
+    let desc = input[1]
+    echo desc
+  let name = ident("fptr_var_" & input[input.len - 1])
+  result = quote do:
+    addr `name`
 
-macro faddr*(proctyp: typed): untyped =
-  ## this macros will returns function address
-
-  let pragmas = getImpl(proctyp).pragma
-  for pragma in pragmas:
-    if pragma.kind == nnkExprColonExpr and $pragma[0] == "fptrAddr":
-      result = pragma[1]
-      break
-
-macro fvar*(proctyp: typed): untyped =
-  ## this macros will returns a pointer to variable that contains function address
-
-  let pragmas = getImpl(proctyp).pragma
-  #echo treeRepr pragmas
-  for pragma in pragmas:
-    if pragma.kind == nnkExprColonExpr and $pragma[0] == "fptrVar":
-      result = newDotExpr(pragma[1], ident("addr"))
-      break
-
-macro fptr*(procdef: untyped) : untyped =
+macro fptr*(body: untyped) : untyped =
   ## this marco will create a proc type based on input
   ## and then create a proc pointer to an address if specified
+  if body.kind != nnkProcDef:
+    return
 
-  if procdef.kind != nnkProcDef:
-    raise newException(ValueError, "function pointer requires a proc")
   var
-    name: string
+    name, ptrName, procName: string
     isExported = false
-  if procdef[0].kind == nnkIdent:
-    name = $procdef[0]
+  if body[0].kind == nnkIdent:
+    name = $body[0]
   else:
-    name = $procdef[0][1]
+    #[
+      #echo treeRepr body[0]
+    if body[0].kind == nnkAccQuoted:
+      name = $body[0][0]
+    else:
+      name = $body[0][1]
+    ]#
+    name = $body[0][1]
     isExported = true
-  var ptrName = genSym(nskVar, "fptr_var")
+  procName = "fptr_proc_" & name
+  ptrName = "fptr_var_" & name
 
   var
+    typeSection = newNimNode(nnkTypeSection)
+    typeDef = newNimNode(nnkTypeDef)
+    varSection = newNimNode(nnkVarSection)
+    identDef = newNimNode(nnkIdentDefs)
     aliasProc = newProc(ident(name))
     pragma = newNimNode(nnkPragma)
 
+  typeSection.add(typeDef)
+  varSection.add(identDef)
 
   # pragma
-  if procdef[4].kind == nnkPragma:
-    pragma = procdef[4]
+  if body[4].kind == nnkPragma:
+    pragma = body[4]
   pragma.add(ident("gcsafe"))
 
-
-  result = newStmtList()
-
-  var procTy = newNimNode(nnkProcTy)
-    .add(procdef[3]) # FormalParams
-    .add(pragma) # pragmas
-
-  if procdef.body.kind != nnkStmtList or procdef.body[0].kind notin [nnkIntLit, nnkInt32Lit, nnkInt64Lit]:
-    raise newException(ValueError, "fptr function pointer requires an address assigned")
   if isExported:
-    let procName = ident(name)
-    procName.copyLineInfo(procdef)
-    aliasProc.name = postfix(procName, "*")
+    typeDef.add(postfix(ident(procName), "*"))
   else:
-    ptrName.copyLineInfo(procdef)
-  let addrNode = procdef[6][0]
+    typeDef.add(ident(procName))
+  typeDef.add(newEmptyNode())
+  typeDef.add(newNimNode(nnkProcTy)
+    .add(body[3]) # FormalParams
+    .add(pragma) # pragmas
+  )
+  result = newStmtList(typeSection)
 
-  aliasProc.params = procdef[3]
-  aliasProc.addPragma(ident("inline"))
-  aliasProc.addPragma(newColonExpr(ident("fptrAddr"), procdef.body[0]))
-  aliasProc.addPragma(newColonExpr(ident("fptrVar"), ptrName))
+  if body[6].kind == nnkStmtList and body[6][0].kind == nnkIntLit:
+    if isExported:
+      identDef.add(postfix(ident(ptrName), "*"))
+      let procName = ident(name)
+      procName.copyLineInfo(body)
+      aliasProc.name = postfix(procName, "*")
+    else:
+      let ptrName = ident(ptrName)
+      ptrName.copyLineInfo(body)
+      identDef.add(ptrName)
 
-  result.add quote do:
-    var `ptrName` = cast[`procTy`](`addrNode`)
 
-  var callVarPtr = newCall(ptrName)
-  for param in procdef[3]:
-    if param.kind == nnkIdentDefs:
-      callVarPtr.add(param[0])
-  aliasProc.body.add(callVarPtr)
+    identDef.add(newEmptyNode())
+    identDef.add(newNimNode(nnkCast)
+      .add(ident(procName))
+      .add(body[6][0])
+    )
 
-  result.add(aliasProc)
-  #echo treeRepr result
-  #echo repr result
+    var aliasProcBody = newCall(ident(ptrName))
+    for param in body[3]:
+      if param.kind == nnkIdentDefs:
+        aliasProcBody.add(param[0])
+
+    aliasProc.params = body[3]
+    aliasProc.addPragma(ident("inline"))
+    aliasProc.body = aliasProcBody
+
+    result.add(varSection)
+    result.add(aliasProc)
+    #echo treeRepr result
 
 when isMainModule:
-  #proc NI_Add(a: int, b: int): int = a + b
-  proc A1(a: int, b: int): int {.fptr, cdecl.} = 0xDEADBEEF
-  proc A2(a: float, b: float): float {.fptr, cdecl.} = 0xC0FFEE
-  var
-    address = faddr A1
-    ptrVar = fvar A2
-  echo ptrVar[](0.0, 0.0)
-  echo address
+  proc NI_Add(a: int, b: int): int = a + b
+  proc A(a: int, b: int): int {.fptr, cdecl.} = 123
+  proc A(a: float, b: float): float {.fptr, cdecl.} = 124
 
-  #echo repr(faddr A.NI_Add)
+  echo repr(faddr A.NI_Add)
