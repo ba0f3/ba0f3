@@ -16,7 +16,7 @@ type
     sendQueue*: string
     recvQueue*: string
     bytesSent: int
-    lastPacketRecveived*: DateTime
+    lastPacketReceived*: DateTime
 
   Settings* = object
     port*: int
@@ -35,6 +35,7 @@ template handleClientClosure(selector: Selector[Data], fd: SocketHandle|int) =
   selector.unregister(fd)
   fd.SocketHandle.close()
 
+
 proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count: int, clientList: var seq[SocketHandle], onRequest: Callback, onConnect: Callback, onDisconnect: Callback) {.thread.} =
   for i in 0 ..< count:
     let
@@ -51,14 +52,14 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
         let (client, _) = fd.SocketHandle.accept()
         if client == osInvalidSocket:
           let lastError = osLastError()
-          if lastError.int32 == 24:
+          if lastError.int32 == 24: # Ignore EMFILE
             warn("Ignoring EMFILE error: ", osErrorMsg(lastError))
             return
           raiseOSError(lastError)
         setBlocking(client, false)
         var clientData = Data(
           kind: Client,
-          lastPacketRecveived: now()
+          lastPacketReceived: now()
         )
         clientData.lock.initLock()
         selector.registerHandle(client, {Event.Read}, clientData)
@@ -73,13 +74,14 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
       asyncdispatch.poll(0)
     of Client:
       if Event.Read in events[i].events:
-        const size = 256
+        # Efficiently read data in chunks
+        const chunkSize = 4096
         var
-          buf: array[size, char]
+          buf: array[chunkSize, char]
           ret: int
         withLock(data.lock):
           while true:
-            ret = recv(fd.SocketHandle, addr buf[0], size, 0.cint)
+            ret = recv(fd.SocketHandle, addr buf[0], chunkSize, 0.cint)
             if ret == 0:
               handleClientClosure(selector, fd)
               break
@@ -93,45 +95,50 @@ proc processEvents(selector: Selector[Data], events: array[64, ReadyKey], count:
                 break
               raiseOSError(lastError)
 
-            data.lastPacketRecveived = now()
+            data.lastPacketReceived = now()
 
             # Write buffer to our data.
             let origLen = data.recvQueue.len
             data.recvQueue.setLen(origLen + ret)
             for i in 0 ..< ret:
               data.recvQueue[origLen+i] = buf[i]
-            if ret != size:
+            if ret != chunkSize:
               # Assume there is nothing else for us right now and break.
               break
           if data.recvQueue.len > 0 and onRequest != nil:
             onRequest(selector, fd.SocketHandle)
           data.recvQueue.setLen(0)
       elif Event.Write in events[i].events:
-        let leftover = data.sendQueue.len - data.bytesSent
+        # Efficiently send data in chunks
+        const sendChunkSize = 4096
+        var leftover = data.sendQueue.len - data.bytesSent
         assert data.bytesSent <= data.sendQueue.len
         if leftover <= 0:
           break
-        let ret = send(fd.SocketHandle, addr data.sendQueue[data.bytesSent], leftover, 0)
-        if ret == -1:
-          # Error!
-          let lastError = osLastError()
-          if lastError.int32 in {EWOULDBLOCK, EAGAIN}:
+        while leftover > 0:
+          let chunkSize = min(leftover, sendChunkSize)
+          let ret = send(fd.SocketHandle, addr data.sendQueue[data.bytesSent], chunkSize, 0)
+          if ret == -1:
+            # Error!
+            let lastError = osLastError()
+            if lastError.int32 in {EWOULDBLOCK, EAGAIN}:
+              break
+            let e = getCurrentException()
+            error "Error sending data", lastError, error=e.name, message=e.msg
+            if isDisconnectionError({SocketFlag.SafeDisconn}, lastError):
+              handleClientClosure(selector, fd)
+              break
+            raiseOSError(lastError, "Error sending data")
+          data.bytesSent.inc(ret)
+          leftover.dec(ret)
+          if ret != chunkSize:  # Assume no more data can be sent for now
             break
-          let e = getCurrentException()
-          error "Error sending data", lastError, error=e.name, message=e.msg
-          if isDisconnectionError({SocketFlag.SafeDisconn}, lastError):
-            handleClientClosure(selector, fd)
-            break
-          raiseOSError(lastError, "Error sending data")
-        data.bytesSent.inc(ret)
-        if ret != leftover:
-          selector.updateHandle(fd.SocketHandle, {Event.Write})
         if data.sendQueue.len == data.bytesSent:
           data.bytesSent = 0
           data.sendQueue.setLen(0)
           selector.updateHandle(fd.SocketHandle, {Event.Read})
       else:
-        assert false
+        assert false, "Unexpected event for Client"
 
 proc eventLoop(params: (Settings, Callback, Callback, Callback)) {.thread.} =
   let (settings, onRequest, onConnect, onDisconnect) = params
@@ -168,16 +175,14 @@ proc eventLoop(params: (Settings, Callback, Callback, Callback)) {.thread.} =
       for i in 0..<clientList.len:
         if selector.contains(clientList[i]):
           data = addr(selector.getData(clientList[i]))
-          let timeout = t - data.lastPacketRecveived
+          let timeout = t - data.lastPacketReceived
           if timeout > duration:
             debug "Closing inactive client", client=clientList[i].int, ping=timeout.inSeconds
             handleClientClosure(selector, clientList[i])
             break
         else:
-
           clientList.del(i)
           break
-
     if unlikely(asyncdispatch.getGlobalDispatcher().callbacks.len > 0):
         asyncdispatch.poll(0)
 

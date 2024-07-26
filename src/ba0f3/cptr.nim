@@ -29,5 +29,4 @@ template `-=`*(p: pointer, off: SomeInteger) =
   p = p - off
 
 template inc*[T](p: ptr T) =
-  let size = sizeof(T)
-  p = cast[ptr T](p + size)
+  p = cast[ptr T](p + sizeof(T))
