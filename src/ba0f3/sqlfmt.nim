@@ -71,9 +71,14 @@ macro fmtImpl(query: static[string], args: varargs[untyped]): untyped =
           s.add(sqlQuote(strVal(args[pos]), false))
       of 'd':
         if args[pos].kind == nnkIdent:
-          joinNode.add(prefix(newCall("int", args[pos]), "$"))
+          joinNode.add(prefix(newCall("BiggestInt", args[pos]), "$"))
         else:
           s.add $intVal(args[pos])
+      of 'f':
+        if args[pos].kind == nnkIdent:
+          joinNode.add(prefix(newCall("BiggestFloat", args[pos]), "$"))
+        else:
+          s.add $floatVal(args[pos])
       of 'b':
         assert args[pos].kind == nnkIdent
         if $args[pos] == "true":
@@ -104,4 +109,4 @@ when isMainModule:
 
 
   echo string(sqlfmt("SELECT * FROM User WHERE username = %s AND class = %s AND age = %d LIMIT %d", name, "nim'", age, 1))
-  echo string(sqlfmt("SELECT * FROM User WHERE username LIKE '%%%S%%' LIMIT %d OFFSET 10", name, age))
+  echo string(sqlfmt("SELECT * FROM User WHERE username LIKE '%%%S%%' LIMIT %d OFFSET 10", name, 10))

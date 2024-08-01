@@ -23,6 +23,11 @@ suite "SQL query parameter substitution":
     check sqlfmt("SELECT * FROM features WHERE is_active = %b", false).string == "SELECT * FROM features WHERE is_active = 0"
     check sqlfmt("SELECT * FROM features WHERE is_active = %b", isActive).string == "SELECT * FROM features WHERE is_active = 0"
 
+  test "Float Parameters":
+    check sqlfmt("SELECT * FROM products WHERE price = %f", 19.99).string == "SELECT * FROM products WHERE price = 19.99"
+    check sqlfmt("SELECT * FROM measurements WHERE value = %f", 1234567890.123456).string == "SELECT * FROM measurements WHERE value = 1234567890.123456"
+
+
   test "Special Characters":
     check sqlfmt("SELECT * FROM comments WHERE comment_text = %s", "%_escape_test_").string == "SELECT * FROM comments WHERE comment_text = '%_escape_test_'"
 
