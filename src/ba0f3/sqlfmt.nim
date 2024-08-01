@@ -1,5 +1,7 @@
 import macros, db_connector/db_common
 
+export sql
+
 proc sqlQuote*(s: string, addQuotes = true): string =
   ## DB quotes the string. Note that this doesn't escape `%` and `_`.
   result = newStringOfCap(s.len + 2)
@@ -15,15 +17,15 @@ proc sqlQuote*(s: string, addQuotes = true): string =
     of '\r': result.add "\\r"
     of '\x1a': result.add "\\Z"
     of '"': result.add "\\\""
-    of '\'': result.add "\\'"
+    of '\'': result.add "\'\'"
     of '\\': result.add "\\\\"
     else: result.add c
   if addQuotes:
     result.add("'")
 
-proc sqlJoin*(args: varargs[string]): string =
+func sqlJoin*(args: varargs[string]): string =
   for arg in args:
-    result = result & arg
+    result.add(arg)
 
 macro fmtImpl(query: static[string], args: varargs[untyped]): untyped =
   result = newNimNode(nnkCall)
@@ -53,7 +55,7 @@ macro fmtImpl(query: static[string], args: varargs[untyped]): untyped =
         joinNode.add(newStrLitNode(s))
         s.setLen(0)
 
-      echo pos, " ", args[pos].kind
+      #echo pos, " ", repr(args[pos]), " ", args[pos].kind
 
 
       case query[i+1]:
@@ -61,7 +63,7 @@ macro fmtImpl(query: static[string], args: varargs[untyped]): untyped =
         if args[pos].kind == nnkIdent:
           joinNode.add(newCall("sqlQuote", args[pos]))
         else:
-          joinNode.add(newStrLitNode(sqlQuote($args[pos])))
+          s.add(sqlQuote(strVal(args[pos])))
       of 'S':
         if args[pos].kind == nnkIdent:
           joinNode.add(newCall("sqlQuote", args[pos], newLit(false)))
@@ -69,9 +71,17 @@ macro fmtImpl(query: static[string], args: varargs[untyped]): untyped =
           joinNode.add(newStrLitNode(sqlQuote($args[pos], false)))
       of 'd':
         if args[pos].kind == nnkIdent:
-          joinNode.add(prefix(args[pos], "$"))
+          joinNode.add(prefix(newCall("int", args[pos]), "$"))
         else:
-          joinNode.add(toStrLit(args[pos]))
+          s.add $intVal(args[pos])
+      of 'b':
+        assert args[pos].kind == nnkIdent
+        if $args[pos] == "true":
+          s.add("1")
+        elif $args[pos] == "false":
+          s.add("0")
+        else:
+          joinNode.add(prefix(newCall("int", args[pos]), "$"))
       else:
         raise newException(ValueError, "Unsupported format character %" & query[i+1])
       inc(i)
@@ -79,7 +89,10 @@ macro fmtImpl(query: static[string], args: varargs[untyped]): untyped =
     else:
       s.add(c)
     inc(i)
-  #echo treeRepr(result)
+
+  if s.len > 0:
+    joinNode.add(newStrLitNode(s))
+  echo treeRepr(result)
 
 template sqlfmt*(query: string, args: varargs[untyped]): untyped =
   fmtImpl(query, args)
@@ -91,4 +104,4 @@ when isMainModule:
 
 
   echo string(sqlfmt("SELECT * FROM User WHERE username = %s AND class = %s AND age = %d LIMIT %d", name, "nim'", age, 1))
-  echo string(sqlfmt("SELECT * FROM User WHERE username LIKE '%%%S%%' LIMIT %d", name, 10))
+  echo string(sqlfmt("SELECT * FROM User WHERE username LIKE '%%%S%%' LIMIT %d OFFSET 10", name, age))
