@@ -1,8 +1,10 @@
 import macros, db_connector/db_common
 
-proc sqlQuote*(s: string): string =
+proc sqlQuote*(s: string, addQuotes = true): string =
   ## DB quotes the string. Note that this doesn't escape `%` and `_`.
   result = newStringOfCap(s.len + 2)
+  if addQuotes:
+    result.add("'")
   for c in items(s):
     # see https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html#mysql-escaping
     case c
@@ -16,6 +18,8 @@ proc sqlQuote*(s: string): string =
     of '\'': result.add "\\'"
     of '\\': result.add "\\\\"
     else: result.add c
+  if addQuotes:
+    result.add("'")
 
 proc sqlJoin*(args: varargs[string]): string =
   for arg in args:
@@ -58,6 +62,11 @@ macro fmtImpl(query: static[string], args: varargs[untyped]): untyped =
           joinNode.add(newCall("sqlQuote", args[pos]))
         else:
           joinNode.add(newStrLitNode(sqlQuote($args[pos])))
+      of 'S':
+        if args[pos].kind == nnkIdent:
+          joinNode.add(newCall("sqlQuote", args[pos], newLit(false)))
+        else:
+          joinNode.add(newStrLitNode(sqlQuote($args[pos], false)))
       of 'd':
         if args[pos].kind == nnkIdent:
           joinNode.add(prefix(args[pos], "$"))
@@ -81,5 +90,5 @@ when isMainModule:
     age = 25
 
 
-  echo string(sqlfmt("SELECT * FROM User WHERE username = '%s' AND class = '%s' AND age = %d LIMIT %d", name, "nim'", age, 1))
-  echo string(sqlfmt("SELECT * FROM User WHERE username LIKE '%%%s%%' LIMIT %d", name, 10))
+  echo string(sqlfmt("SELECT * FROM User WHERE username = %s AND class = %s AND age = %d LIMIT %d", name, "nim'", age, 1))
+  echo string(sqlfmt("SELECT * FROM User WHERE username LIKE '%%%S%%' LIMIT %d", name, 10))
