@@ -68,7 +68,7 @@ macro fmtImpl(query: static[string], args: varargs[untyped]): untyped =
         if args[pos].kind == nnkIdent:
           joinNode.add(newCall("sqlQuote", args[pos], newLit(false)))
         else:
-          joinNode.add(newStrLitNode(sqlQuote($args[pos], false)))
+          s.add(sqlQuote(strVal(args[pos]), false))
       of 'd':
         if args[pos].kind == nnkIdent:
           joinNode.add(prefix(newCall("int", args[pos]), "$"))
@@ -92,7 +92,7 @@ macro fmtImpl(query: static[string], args: varargs[untyped]): untyped =
 
   if s.len > 0:
     joinNode.add(newStrLitNode(s))
-  echo treeRepr(result)
+  #echo treeRepr(result)
 
 template sqlfmt*(query: string, args: varargs[untyped]): untyped =
   fmtImpl(query, args)
