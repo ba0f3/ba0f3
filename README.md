@@ -1,8 +1,9 @@
-I spent my free time on weekends and nights to writing code. I've release many open-source projects and contributed to many others. 
+I'm a passionate programmer who spends my free time on weekends and nights writing code. I love contributing to the open-source community and have released several projects and contributed to many others.
 
-I'm falling in love with [Nim](https://nim-lang.org), if you are using Nim, you may using my work (even you didnt notice that) 🙃
+### Using Nim? You Might Already Be Using My Work!
 
-If my work has been useful or saved you time, consider buy me some beer 🍺
+If you're a [Nim](https://nim-lang.org) developer, there's a good chance you've already encountered my work, even if you haven't realized it. I'm always striving to create helpful and innovative tools for the Nim community.
 
-### Donation
-**Paypal**: [https://paypal.me/ba0f3](https://paypal.me/ba0f3)
+### Support My Work (Coffee or Beer is Welcome!)
+
+If my work has been useful or saved you time, I'd appreciate your support. You can buy me a coffee (or a beer!) via PayPal: [https://paypal.me/ba0f3](https://paypal.me/ba0f3)
